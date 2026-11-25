@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Follow-the-Blur pipeline (animated)</title>
+<style>
+  /* Animated version of the overview figure of the paper (4D control | Stage 1: dual-band denoising | Stage 2: depth to
+     video), embedded with an <iframe> on the project page. Design canvas 1840 x 760 (figure 690 + controls), scaled to
+     the frame width. One case (back carry); every clip is a 3 s loop of the same motion, so the tiles stay in step.
+     Works from file:// (no fetch). Written after the pipeline figure of the RetakeBench page. */
+  :root { --text: #1f2330; --dim: #4b5263; --mute: #9aa1b2; --line: #dfe2ea; --or: #c4623a; --teal: #1f5f5b; --vio: #5b46c9; }
+  html, body { margin: 0; padding: 0; background: #ffffff; overflow: hidden; }
+  body { font-family: "Google Sans", "Noto Sans", "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--text); }
+  #stage { position: absolute; left: 0; top: 0; width: 1840px; height: 760px; transform-origin: 0 0; }
+  .panel { position: absolute; border-radius: 18px; }
+  .ptitle { position: absolute; left: 20px; top: 13px; font-size: 28px; font-weight: 700; white-space: nowrap; }
+  .ptitle .n { margin-right: 10px; }
+  .img { position: absolute; border-radius: 9px; overflow: hidden; background: #0b0b10; box-shadow: 0 4px 12px rgba(20, 24, 44, 0.16); }
+  .img video, .img img, .img canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+  .white { background: #ffffff; }
+  .cap { position: absolute; font-size: 24px; color: var(--dim); text-align: center; white-space: nowrap; }
+  .cap b { color: var(--text); }
+  .note { position: absolute; font-size: 22px; font-weight: 600; white-space: nowrap; }
+  .blk { position: absolute; border-radius: 12px; color: #fff; font-size: 25px; font-weight: 700; display: flex; flex-direction: column; align-items: center; justify-content: center;
+         text-align: center; line-height: 1.15; box-shadow: 6px 6px 0 rgba(20, 24, 44, 0.08); }
+  .blk small { font-size: 19px; font-weight: 600; opacity: 0.9; margin-top: 3px; }
+  .badge { position: absolute; padding: 4px 16px; border-radius: 999px; background: var(--teal); color: #fff; font-size: 22px; font-weight: 700; white-space: nowrap; }
+  .prompt { position: absolute; box-sizing: border-box; padding: 9px 12px; border-radius: 9px; background: #fff7e6; border: 1.5px solid #ecd9a8; font-size: 19px; line-height: 1.25; font-style: italic;
+            color: #4a3d1c; display: flex; align-items: center; }
+  .ring { position: absolute; border-radius: 11px; box-sizing: border-box; pointer-events: none; }
+  #arrows { position: absolute; left: 0; top: 0; width: 1840px; height: 690px; overflow: visible; pointer-events: none; }
+  #arrows path { fill: none; stroke: #8f96a8; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; }
+  #arrows path.or { stroke: var(--or); } #arrows path.tl { stroke: var(--teal); }
+  /* the step-by-step part of Stage 1 */
+  .pv { opacity: 0; transition: opacity 0.35s ease; } .pv.on { opacity: 1; }
+  #bar { position: absolute; left: 520px; top: 566px; width: 800px; height: 86px; }
+  #bar .b0 { position: absolute; left: 0; top: 10px; width: 800px; height: 12px; border-radius: 6px; background: var(--line); }
+  #bar .b1 { position: absolute; top: 10px; height: 12px; background: var(--or); border-radius: 6px 0 0 6px; }
+  #bar .b2 { position: absolute; top: 10px; height: 12px; background: var(--teal); border-radius: 0 6px 6px 0; }
+  #bar .cur { position: absolute; left: 0; top: 0; width: 8px; height: 32px; border-radius: 4px; background: var(--text); transition: transform 0.45s ease; }
+  #bar .l1 { position: absolute; top: 34px; font-size: 26px; font-weight: 700; color: var(--or); white-space: nowrap; }
+  #bar .l2 { position: absolute; top: 34px; font-size: 26px; font-weight: 700; color: var(--teal); white-space: nowrap; }
+  #swap { transition: opacity 0.3s ease; } #swap.dim { opacity: 0.25; }
+  /* staged reveal */
+  .s { transition: opacity 0.45s ease, transform 0.45s ease; }
+  .s.off { opacity: 0; transform: translateY(10px); }
+  /* controls */
+  #ctl { position: absolute; left: 0; top: 704px; width: 1840px; height: 52px; display: flex; align-items: center; gap: 14px; }
+  #ctl button { font: inherit; font-size: 23px; border: 1.5px solid var(--line); background: #fff; color: var(--dim); border-radius: 999px; padding: 6px 20px; cursor: pointer;
+                display: inline-flex; align-items: center; gap: 10px; }
+  #ctl button:hover { border-color: var(--mute); color: var(--text); }
+  #ctl button.on { border-color: var(--vio); color: var(--vio); background: #f1eefe; }
+  #ctl button:focus-visible { outline: 3px solid var(--vio); outline-offset: 2px; }
+  #ctl .sep { flex: 1; }
+  @media (prefers-reduced-motion: reduce) { .s, .pv, #bar .cur { transition: none; } }
+</style>
+</head>
+<body>
+<div id="stage">
+  <!-- 1  4D control -->
+  <div class="panel s" data-at="0.3" style="left:0;top:0;width:470px;height:690px;background:#f7f2ea"><div class="ptitle"><span class="n" style="color:#c4623a">1</span>4D control</div></div>
+  <div class="img s" data-at="0.7" style="left:30px;top:74px;width:230px;height:129px"><img src="pipeline/input.jpg" alt=""></div>
+  <div class="cap s" data-at="0.7" style="left:30px;top:208px;width:230px">input image</div>
+  <div class="note s" data-at="1.4" style="left:282px;top:108px;color:#4b5263;font-weight:500;line-height:1.25;white-space:normal;width:170px">lift to 3D,<br>design paths</div>
+  <div class="img white s" data-at="1.9" style="left:30px;top:284px;width:410px;height:231px"><video src="pipeline/ctl.mp4" muted playsinline loop preload="auto"></video></div>
+  <div class="cap s" data-at="1.9" style="left:30px;top:522px;width:410px">each object moves as a <b>rigid</b> body</div>
+
+  <!-- 2  Stage 1 -->
+  <div class="panel s" data-at="2.8" style="left:490px;top:0;width:860px;height:690px;background:#eef4f1"><div class="ptitle"><span class="n" style="color:#1f5f5b">2</span>Stage 1: dual-band denoising</div></div>
+  <div class="badge s" data-at="2.8" style="left:1150px;top:13px">Training-free</div>
+  <div class="img s" data-at="3.2" style="left:520px;top:92px;width:250px;height:141px"><video src="pipeline/rigid.mp4" muted playsinline loop preload="auto"></video></div>
+  <div class="cap s" data-at="3.2" style="left:520px;top:238px;width:250px">rigid depth</div>
+  <div class="note s" data-at="4.0" style="left:792px;top:118px;color:#c4623a">blur</div>
+  <div class="img s" data-at="4.4" style="left:880px;top:92px;width:250px;height:141px"><video src="pipeline/ctl_low.mp4" muted playsinline loop preload="auto"></video></div>
+  <div class="ring s" data-at="4.4" style="left:876px;top:88px;width:258px;height:149px;border:4px solid #c4623a"></div>
+  <div class="cap s" data-at="4.4" style="left:880px;top:238px;width:250px">its <b>low band</b></div>
+  <div class="note s" data-at="5.6" id="swap" style="left:1020px;top:296px;color:#c4623a">low band to follow</div>
+  <div class="img s" data-at="5.0" style="left:540px;top:368px;width:176px;height:99px"><canvas id="noise" width="176" height="99"></canvas></div>
+  <div class="cap s" data-at="5.0" style="left:540px;top:472px;width:176px">noise</div>
+  <div class="blk s" data-at="5.6" style="left:770px;top:352px;width:262px;height:130px;background:#1f5f5b">&#10052; Video world model<small>pretrained</small></div>
+  <div class="img s" data-at="6.3" style="left:1082px;top:346px;width:250px;height:141px">
+    <video class="pv" data-k="4" src="pipeline/pred_04.mp4" muted playsinline loop preload="auto"></video>
+    <video class="pv" data-k="10" src="pipeline/pred_10.mp4" muted playsinline loop preload="auto"></video>
+    <video class="pv" data-k="16" src="pipeline/pred_16.mp4" muted playsinline loop preload="auto"></video>
+    <video class="pv" data-k="23" src="pipeline/pred_23.mp4" muted playsinline loop preload="auto"></video>
+    <video class="pv" data-k="30" src="pipeline/pred_30.mp4" muted playsinline loop preload="auto"></video>
+    <video class="pv" data-k="40" src="pipeline/pred_40.mp4" muted playsinline loop preload="auto"></video>
+  </div>
+  <div class="ring s" data-at="6.3" style="left:1078px;top:342px;width:258px;height:149px;border:4px solid #1f5f5b"></div>
+  <div class="cap s" data-at="6.3" style="left:1062px;top:492px;width:290px"><b id="plab">step 4 of 40</b></div>
+  <div class="s" data-at="6.3" id="bar"><div class="b0"></div><div class="b1" id="b1"></div><div class="b2" id="b2"></div><div class="cur" id="cur"></div>
+    <span class="l1" style="left:0">Follow the blur</span><span class="l2" id="l2">Release &amp; refine</span></div>
+
+  <!-- 3  Stage 2 -->
+  <div class="panel s" data-at="15.4" style="left:1370px;top:0;width:470px;height:690px;background:#f1f1f7"><div class="ptitle"><span class="n" style="color:#5b46c9">3</span>Stage 2: depth to video</div></div>
+  <div class="img s" data-at="15.9" style="left:1400px;top:92px;width:190px;height:107px"><img src="pipeline/input.jpg" alt=""></div>
+  <div class="cap s" data-at="15.9" style="left:1400px;top:204px;width:190px">input image</div>
+  <div class="prompt s" data-at="15.9" style="left:1606px;top:92px;width:206px;height:107px">&ldquo;A boy jumps onto his father&rsquo;s back, &hellip;&rdquo;</div>
+  <div class="cap s" data-at="15.9" style="left:1606px;top:204px;width:206px">text prompt</div>
+  <div class="blk s" data-at="16.6" style="left:1400px;top:270px;width:412px;height:92px;background:#5b46c9">&#10052; Depth-controlled video world model<small>pretrained</small></div>
+  <div class="img s" data-at="17.3" style="left:1400px;top:410px;width:412px;height:232px"><video src="pipeline/out.mp4" muted playsinline loop preload="auto"></video></div>
+  <div class="ring s" data-at="17.3" style="left:1396px;top:406px;width:420px;height:240px;border:4px solid #5b46c9"></div>
+  <div class="cap s" data-at="17.3" style="left:1400px;top:648px;width:412px"><b>output video</b></div>
+
+  <svg id="arrows" viewBox="0 0 1840 690">
+    <defs>
+      <marker id="ah" markerWidth="9" markerHeight="9" refX="7.4" refY="4.5" orient="auto"><path d="M1,1 L7.6,4.5 L1,8" style="fill:none;stroke:#8f96a8;stroke-width:1.5"/></marker>
+      <marker id="aho" markerWidth="9" markerHeight="9" refX="7.4" refY="4.5" orient="auto"><path d="M1,1 L7.6,4.5 L1,8" style="fill:none;stroke:#c4623a;stroke-width:1.5"/></marker>
+      <marker id="aht" markerWidth="9" markerHeight="9" refX="7.4" refY="4.5" orient="auto"><path d="M1,1 L7.6,4.5 L1,8" style="fill:none;stroke:#1f5f5b;stroke-width:1.5"/></marker>
+    </defs>
+    <path class="s" data-at="1.4" d="M145,240 L145,276" marker-end="url(#ah)"/>
+    <path class="s" data-at="3.0" d="M446,400 L478,400 L478,162 L512,162" marker-end="url(#ah)"/>
+    <path class="s or" data-at="4.0" d="M776,162 L872,162" marker-end="url(#aho)"/>
+    <path class="s or" data-at="5.6" d="M1005,276 L1005,300 L901,300 L901,344" marker-end="url(#aho)"/>
+    <path class="s" data-at="5.3" d="M722,417 L762,417" marker-end="url(#ah)"/>
+    <path class="s tl" data-at="6.0" d="M1038,417 L1072,417" marker-end="url(#aht)"/>
+    <path class="s tl" data-at="15.6" d="M1342,417 L1358,417 L1358,316 L1392,316" marker-end="url(#aht)"/>
+    <path class="s" data-at="16.3" d="M1495,236 L1495,262" marker-end="url(#ah)"/>
+    <path class="s" data-at="16.3" d="M1709,236 L1709,262" marker-end="url(#ah)"/>
+    <path class="s" data-at="17.0" d="M1606,368 L1606,400" marker-end="url(#ah)"/>
+  </svg>
+  <div class="note s" data-at="3.0" style="left:442px;top:262px;color:#4b5263;font-weight:500;font-size:20px;transform:rotate(-90deg);transform-origin:left top">render</div>
+
+  <div id="ctl">
+    <button id="b-play" type="button" aria-label="Replay the animation"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z" fill="currentColor"/></svg>Replay</button>
+    <span class="sep"></span>
+    <button type="button" data-stage="0" data-end="2.7">1 4D control</button>
+    <button type="button" data-stage="1" data-end="15.3">2 Dual-band denoising</button>
+    <button type="button" data-stage="2" data-end="18.5">3 Depth to video</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  const stage = document.getElementById("stage");
+  function fit() { stage.style.transform = "scale(" + (window.innerWidth / 1840) + ")"; }
+  window.addEventListener("resize", fit); fit();
+
+  // ---- noise tile ---------------------------------------------------------------------------------------------
+  (function () { const c = document.getElementById("noise").getContext("2d"), im = c.createImageData(176, 99);
+    for (let i = 0; i < im.data.length; i += 4) { const g = 50 + Math.random() * 170; im.data[i] = im.data[i + 1] = im.data[i + 2] = g; im.data[i + 3] = 255; } c.putImageData(im, 0, 0); })();
+
+  // ---- the denoising steps of Stage 1: the prediction changes, the bar moves from "follow" to "release" ---------
+  const STEPS = [4, 10, 16, 23, 30, 40], FOLLOW_END = 23, T0 = 6.6, DT = 1.4, BW = 800;
+  const preds = Array.from(document.querySelectorAll(".pv")), plab = document.getElementById("plab"), cur = document.getElementById("cur"),
+        swap = document.getElementById("swap"), xe = BW * FOLLOW_END / 40;
+  document.getElementById("b1").style.cssText += "left:0;width:" + xe + "px";
+  document.getElementById("b2").style.cssText += "left:" + xe + "px;width:" + (BW - xe) + "px";
+  document.getElementById("l2").style.left = xe + "px";
+  function steps(e) {
+    let k = Math.floor((e - T0) / DT); k = Math.max(0, Math.min(STEPS.length - 1, k));
+    const st = STEPS[k];
+    preds.forEach((v, i) => v.classList.toggle("on", i === k));
+    plab.textContent = st === 40 ? "refined depth" : "step " + st + " of 40";
+    cur.style.transform = "translateX(" + (BW * st / 40 - 4) + "px)";
+    swap.classList.toggle("dim", st > FOLLOW_END);
+    swap.textContent = st > FOLLOW_END ? "released" : "low band to follow";
+  }
+
+  // ---- staged reveal ------------------------------------------------------------------------------------------
+  const items = Array.from(document.querySelectorAll(".s")).map((el) => ({ el, at: parseFloat(el.dataset.at) }));
+  const stages = Array.from(document.querySelectorAll("[data-stage]"));
+  const STARTS = [0, 2.8, 15.4], END = 18.6;
+  let t0 = null, elapsed = 0, playing = false;
+  function apply() {
+    items.forEach((o) => o.el.classList.toggle("off", elapsed < o.at));
+    steps(elapsed);
+    let c = 0; STARTS.forEach((s, i) => { if (elapsed >= s) c = i; });
+    stages.forEach((b, i) => b.classList.toggle("on", playing ? i === c : false));
+  }
+  function play(from) { elapsed = from || 0; t0 = performance.now() - elapsed * 1000; playing = true; apply(); }
+  document.getElementById("b-play").addEventListener("click", () => play(0));
+  stages.forEach((b) => b.addEventListener("click", () => {
+    playing = false; elapsed = parseFloat(b.dataset.end); apply();
+    stages.forEach((x) => x.classList.toggle("on", x === b));
+  }));
+
+  // ---- videos: 3 s loops of the same motion, started together -------------------------------------------------
+  const vids = Array.from(document.querySelectorAll("video"));
+  function startVids() { vids.forEach((v) => { try { v.currentTime = 0; } catch (e) {} const p = v.play(); if (p && p.catch) p.catch(() => {}); }); }
+
+  // ---- loop: only while the figure is on screen --------------------------------------------------------------
+  let visible = false, started = false;
+  function tick(now) {
+    if (playing) { elapsed = (now - t0) / 1000; if (elapsed > END) { playing = false; elapsed = 99; } apply(); }
+    requestAnimationFrame(tick);
+  }
+  const io = new IntersectionObserver((es) => {
+    visible = es.some((x) => x.isIntersecting);
+    if (visible && !started) { started = true; startVids(); play(0); }
+    vids.forEach((v) => { if (visible) { const p = v.play(); if (p && p.catch) p.catch(() => {}); } else v.pause(); });
+  }, { threshold: 0.25 });
+  io.observe(stage);
+  elapsed = 0; apply();
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
