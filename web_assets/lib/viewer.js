@@ -33,7 +33,7 @@
         fragmentShader: "varying vec3 vc; varying float va; void main(){ vec2 c = gl_PointCoord - .5; if (dot(c,c) > .25 || va < .02) discard; gl_FragColor = vec4(vc, va); }" }); };
       var cloud = function (pos, col, size, bg) { var g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
         g.setAttribute("color", new THREE.BufferAttribute(col, 3, true)); var p = new THREE.Points(g, pmat(size, bg)); p.frustumCulled = false; scene.add(p); return p; };
-      cloud(deq(D.bg, D.lo, D.hi), b64(D.bgc), px * 4.6, true);
+      cloud(deq(D.bg, D.lo, D.hi), b64(D.bgc), px * 7.5, true);
       var rw = Math.max(span, dist * .35) * .0085;
       var basic = function (color) { return new THREE.MeshBasicMaterial({ color: color, depthTest: false, transparent: true, depthWrite: false }); };
       var add = function (geo, color, order, parent) { var m = new THREE.Mesh(geo, basic(color)); m.renderOrder = order; (parent || scene).add(m); return m; };
@@ -48,7 +48,7 @@
           [[rw * 4.1, 0xffffff, od + 1, .5], [rw * 3.2, COL[k], od + 3, .52]].forEach(function (a) { var m = add(new THREE.ConeGeometry(a[0], a[0] * 2.6, 20), a[1], a[2]);
             m.position.copy(base).addScaledVector(dir, a[3]); m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize()); });
           [[rw * 2.9, 0xffffff, od + 1], [rw * 2.1, COL[k], od + 3]].forEach(function (a) { add(new THREE.SphereGeometry(a[0], 20, 14), a[1], a[2]).position.copy(P[0]); }); }
-        var p = cloud(deq(o.p, o.lo, o.hi), b64(o.c), px * 3.3, false); p.matrixAutoUpdate = false; return p; });
+        var p = cloud(deq(o.p, o.lo, o.hi), b64(o.c), px * 5.0, false); p.matrixAutoUpdate = false; return p; });
       // camera: a wireframe that follows the camera of the current frame; its path in gold if it moves
       var CP = []; for (var k = 0; k < N; k++) CP.push(new THREE.Vector3().setFromMatrixPosition(mat(D.cams, k)));
       var cmove = CP[N - 1].distanceTo(CP[0]) > dist * .05, fs = dist * .2 * Math.max(1, fx / D.wh[0] / 1.4);
